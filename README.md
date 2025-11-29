@@ -1,0 +1,1 @@
+This is an educational experimentation (I am the one being educated here) around the very famous [Attention Is All You Need](https://arxiv.org/pdf/1706.03762). 
