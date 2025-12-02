@@ -50,7 +50,7 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         d_model: int,
         expand_size: int,
-        activation: nn.GELU,
+        activation: nn.Module = nn.GELU,
         atn_drop: float = 0.1,
         out_drop: float = 0.1,
         mlp_drop: float = 0.1,

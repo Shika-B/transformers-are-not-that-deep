@@ -77,12 +77,14 @@ class Decoder(nn.Module):
         Returns logits of shape [batch_size, tgt_len, vocab_size]
         """
 
+        _batch_size, tgt_len = x.shape
         tokens = self.vocab_embed(x)
         tokens_with_pos = self.pos_embed(tokens)
 
         x = self.embed_drop(tokens_with_pos)
 
-        tgt_mask = self.causal_mask | tgt_pad_mask
+        causal = self.causal_mask[:, :, :tgt_len, :tgt_len]
+        tgt_mask = causal | tgt_pad_mask
         for block in self.transformers:
             x = block(x, encoded, tgt_mask, memory_mask=src_pad_mask)
 

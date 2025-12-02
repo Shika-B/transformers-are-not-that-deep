@@ -32,9 +32,9 @@ class Encoder(nn.Module):
                     num_heads,
                     d_model,
                     4 * d_model,
-                    atn_drop,
-                    out_drop,
-                    mlp_drop,
+                    atn_drop=atn_drop,
+                    out_drop=out_drop,
+                    mlp_drop=mlp_drop,
                     bias=bias,
                 )
                 for _ in range(num_layers)
