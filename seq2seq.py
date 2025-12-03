@@ -161,10 +161,12 @@ def train(reload_path: str | None = None, save_path: str | None = None):
     torch.manual_seed(23)
     
     num_layers = 4
-    num_heads = 8
+    num_heads = 4
     d_model = 256
+    # Longer sequences (after tokenization) get excluded from the dataset
     max_seq_len = 64
-    vocab_size = 15_000
+    vocab_size = 10_000
+    lr = 3e-4
     pad_id = 0
 
     batch_size = 32
@@ -179,12 +181,13 @@ def train(reload_path: str | None = None, save_path: str | None = None):
     if reload_path is not None:
         model.load_state_dict(torch.load(reload_path))
 
+
     # For faster/better training
     torch.compile(model, mode="reduce-overhead")
     torch.set_float32_matmul_precision('high')
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_id)
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     tokenizer = get_bpe_tokenizer("data/eng-fra.txt", vocab_size=vocab_size)
 
@@ -209,7 +212,7 @@ def train(reload_path: str | None = None, save_path: str | None = None):
         return src_batch, tgt_in_batch, tgt_out_batch
 
 
-    dataset = FraEngDataset(tokenizer, file_path, 64)
+    dataset = FraEngDataset(tokenizer, file_path, max_seq_len)
 
     train_size = int(0.8 * len(dataset))
     val_size   = int(0.1 * len(dataset))
@@ -252,7 +255,7 @@ def train(reload_path: str | None = None, save_path: str | None = None):
             if epoch + idx != 0 and idx % 1000 == 0:
                 print(f"Epoch {epoch}, iteration {idx}")
                 translation = translate(
-                    test_translate, model, tokenizer, max_len=128, device=device
+                    test_translate, model, tokenizer, max_len=max_seq_len, device=device
                 )
                 print(f"Translation of '{test_translate}': {translation}")
                 print(f"Last loss: {loss.item()}")

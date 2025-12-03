@@ -1,10 +1,29 @@
 This is an educational experimentation (I am the one being educated here) around the very famous [Attention Is All You Need](https://arxiv.org/pdf/1706.03762). I use a dataset of 130k pairs of translated sentences from English to French to train a machine translation model to translate from French to English. 
 
 # Results
-On my very small laptop (with a cheap dedicated GPU from 8 years ago), I get 
-TODO train and show results
+Since both French and English languages are Romance-language, I use a common Byte-Pair encoding tokenizer trained on the same dataset, of size `vocab_size = 15_000`.
+I also settled on the following hyperparameters, after some tweaking around. 
+```python
+    num_layers = 4
+    num_heads = 4
+    d_model = 256
+    # Longer sequences (after tokenization) get excluded from the dataset
+    max_seq_len = 64
+    vocab_size = 10_000
+```
+We can probably get much better result with proper hyperparameter tuning but I have absolutely no idea how to do that more systematic way than educated guessing and trying.
 
-# Architecture
+On my laptop (with a cheap dedicated GPU from 8 years ago), I get in a few hours:
+
+Before   | Translation of "longtemps je me suis couché de bonne heure." |
+:--------|:-------------------------------------------------------------|
+Epoch 2  | long long i'm a good time.                                   |
+Epoch 5  | a long time i went to bed.                                   |
+Epoch 10 | i went to bed at a good time.                                |
+Epoch 15 | i have been to bed by a good time.                           |
+Epoch 20 | long i went to sleep early.                                  |
+
+# Project Architecture
 The file architecture is the following:
 - In [attention.py](attention.py) we define a very generic multi-head attention `nn.Module`, that simultaneously handles all the common flavours of attention (cross attention, self attention etc.). The mathematical formulas are very close so it is reasonable to use a single API for all of them.  
 - In [transformers.py](transformers.py), we define a standard `TransformerBlock` as defined in the above paper
