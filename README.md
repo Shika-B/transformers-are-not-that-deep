@@ -29,3 +29,5 @@ The file architecture is the following:
 - In [transformers.py](transformers.py), we define a standard `TransformerBlock` as defined in the above paper
 - In [decoder.py](decoder.py) and [encoder.py](encoder.py) we define two `nn.Module`s following a standard seq2seq architecture, each containing multiple layers of TransformerBlock and doing the appropriate remaining work (embeddings, cross attention in the decoder etc.)
 - In [seq2seq.py](seq2seq.py) we define the general translation model and all the training heavylifting is done there: dataloading utilities, the training loop, the testing etc.
+- In [bpe.py](bpe.py) there's a single BPE tokenizer training and loading function.
+- In [my_utils.py](my_utils.py) there are a few PyTorch utilities that are not already existing in PyTorch.  
