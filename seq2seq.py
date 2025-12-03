@@ -1,12 +1,9 @@
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, random_split
 
-from transformers import TransformerBlock, SinusoidalPositionalEncoding
 from encoder import Encoder
 from decoder import Decoder
-from my_utils import _init_weights
 from bpe import get_bpe_tokenizer
 
 import re
@@ -78,7 +75,7 @@ class TranslateModel(nn.Module):
 
 
 class FraEngDataset(torch.utils.data.Dataset):
-    def __init__(self, tokenizer, file_path):
+    def __init__(self, tokenizer, file_path, max_len):
         super().__init__()
         with open(file_path, "r", encoding="utf-8") as file:
             lines = file.read().strip().split("\n")
@@ -101,10 +98,18 @@ class FraEngDataset(torch.utils.data.Dataset):
             ).ids
             for line in lines_fra
         ]
+        lines_eng_tokens_bis = []
+        lines_fra_tokens_bis = []
 
-        self.lines_eng_tokens = lines_eng_tokens
-        self.lines_fra_tokens = lines_fra_tokens
-        self.len = len(lines_fra_tokens)
+        for (line_eng, line_fra) in zip(lines_eng_tokens, lines_fra_tokens):
+            if max(len(line_eng), len(line_fra)) > max_len:
+                continue
+            lines_eng_tokens_bis.append(line_eng)
+            lines_fra_tokens_bis.append(line_fra)
+
+        self.lines_eng_tokens = lines_eng_tokens_bis
+        self.lines_fra_tokens = lines_fra_tokens_bis
+        self.len = len(self.lines_fra_tokens)
 
     def __len__(self):
         return self.len
@@ -152,12 +157,17 @@ def translate(sentence, model, tokenizer, max_len=40, device="cpu"):
 
 
 def train(reload_path: str | None = None, save_path: str | None = None):
+    # For a reproducible splitting of the dataset in case of reloading
+    torch.manual_seed(23)
+    
     num_layers = 4
-    num_heads = 4
+    num_heads = 8
     d_model = 256
-    max_seq_len = 128
-    vocab_size = 10_000
+    max_seq_len = 64
+    vocab_size = 15_000
     pad_id = 0
+
+    batch_size = 32
     file_path = "data/eng-fra.txt"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -169,36 +179,55 @@ def train(reload_path: str | None = None, save_path: str | None = None):
     if reload_path is not None:
         model.load_state_dict(torch.load(reload_path))
 
-    model = torch.compile(model, mode="default")
+    # For faster/better training
+    torch.compile(model, mode="reduce-overhead")
+    torch.set_float32_matmul_precision('high')
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
 
-    tokenizer = get_bpe_tokenizer("data/eng-fra.txt")
+    tokenizer = get_bpe_tokenizer("data/eng-fra.txt", vocab_size=vocab_size)
+
+
+    def pad_sequences(sequences, max_len, pad_value):
+        batch_size = len(sequences)
+        padded = torch.full((batch_size, max_len), pad_value, dtype=sequences[0].dtype)
+
+        for i, seq in enumerate(sequences):
+            end = min(len(seq), max_len)
+            padded[i, :end] = seq[:end]
+
+        return padded
 
     def collate_fn(batch):
         src_batch, tgt_in_batch, tgt_out_batch = zip(*batch)
 
-        src_batch = pad_sequence(src_batch, batch_first=True, padding_value=0)
-        tgt_in_batch = pad_sequence(tgt_in_batch, batch_first=True, padding_value=0)
-        tgt_out_batch = pad_sequence(tgt_out_batch, batch_first=True, padding_value=0)
+        src_batch = pad_sequences(src_batch, max_len=max_seq_len, pad_value=pad_id)
+        tgt_in_batch = pad_sequences(tgt_in_batch, max_len=max_seq_len, pad_value=pad_id)
+        tgt_out_batch = pad_sequences(tgt_out_batch, max_len=max_seq_len, pad_value=pad_id)
 
         return src_batch, tgt_in_batch, tgt_out_batch
 
-    train_loader = DataLoader(
-        FraEngDataset(tokenizer, file_path),
-        batch_size=32,
-        shuffle=True,
-        collate_fn=collate_fn,
-    )
 
-    num_epochs = 10
+    dataset = FraEngDataset(tokenizer, file_path, 64)
+
+    train_size = int(0.8 * len(dataset))
+    val_size   = int(0.1 * len(dataset))
+    test_size  = len(dataset) - train_size - val_size
+
+    train_ds, val_ds, test_ds = random_split(dataset, [train_size, val_size, test_size])
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+    print('Loaded data')
+    num_epochs = 20
 
     test_translate = "Longtemps je me suis couché de bonne heure"
     model.train()
+    print('Starting training')
     for epoch in range(num_epochs):
-        total_loss = 0
-
         for idx, (src, tgt_in, tgt_out) in enumerate(train_loader):
             src = src.to(device)
             tgt_in = tgt_in.to(device)
@@ -219,21 +248,32 @@ def train(reload_path: str | None = None, save_path: str | None = None):
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            total_loss += loss.item()
-            if idx != 0 and idx % 1000 == 0:
+            if epoch + idx != 0 and idx % 1000 == 0:
                 print(f"Epoch {epoch}, iteration {idx}")
                 translation = translate(
                     test_translate, model, tokenizer, max_len=128, device=device
                 )
-                print(f"Translation of '{test_translate}: {translation}")
+                print(f"Translation of '{test_translate}': {translation}")
                 print(f"Last loss: {loss.item()}")
-        avg_loss = total_loss / len(train_loader)
-        print(f"Average loss {avg_loss}")
+        
+        print('Testing on validation dataset')
+        val_loss = 0
+        for idx, (src, tgt_in, tgt_out) in enumerate(val_loader):
+            src = src.to(device)
+            tgt_in = tgt_in.to(device)
+            tgt_out = tgt_out.to(device)
 
+            logits = model(src, tgt_in)
+
+            logits_flat = logits.reshape(-1, vocab_size)
+            tgt_flat = tgt_out.reshape(-1)
+
+            loss = criterion(logits_flat, tgt_flat)
+            val_loss += loss.item()
+        print("Validation loss:", loss.item()/len(val_loader))
         if save_path is not None:
             torch.save(model.state_dict(), save_path)
             print("Saved model")
-
 
 if __name__ == "__main__":
     train(save_path="weights/model.pth")
