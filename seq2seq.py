@@ -229,6 +229,7 @@ def train(reload_path: str | None = None, save_path: str | None = None):
     print('Starting training')
     for epoch in range(num_epochs):
         for idx, (src, tgt_in, tgt_out) in enumerate(train_loader):
+            model.train()
             src = src.to(device)
             tgt_in = tgt_in.to(device)
             tgt_out = tgt_out.to(device)
@@ -257,20 +258,25 @@ def train(reload_path: str | None = None, save_path: str | None = None):
                 print(f"Last loss: {loss.item()}")
         
         print('Testing on validation dataset')
-        val_loss = 0
-        for idx, (src, tgt_in, tgt_out) in enumerate(val_loader):
-            src = src.to(device)
-            tgt_in = tgt_in.to(device)
-            tgt_out = tgt_out.to(device)
+        val_loss = 0.0
 
-            logits = model(src, tgt_in)
+        model.eval()
+        with torch.no_grad():
+            for src, tgt_in, tgt_out in val_loader:
+                src = src.to(device)
+                tgt_in = tgt_in.to(device)
+                tgt_out = tgt_out.to(device)
 
-            logits_flat = logits.reshape(-1, vocab_size)
-            tgt_flat = tgt_out.reshape(-1)
+                logits = model(src, tgt_in)
 
-            loss = criterion(logits_flat, tgt_flat)
-            val_loss += loss.item()
-        print("Validation loss:", loss.item()/len(val_loader))
+                logits_flat = logits.reshape(-1, vocab_size)
+                tgt_flat = tgt_out.reshape(-1)
+
+                loss = criterion(logits_flat, tgt_flat)
+                val_loss += loss.item()
+
+        mean_val_loss = val_loss / len(val_loader)
+        print("Validation loss:", mean_val_loss)
         if save_path is not None:
             torch.save(model.state_dict(), save_path)
             print("Saved model")
