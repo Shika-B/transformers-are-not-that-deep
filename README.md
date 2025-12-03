@@ -13,7 +13,7 @@ I also settled on the following hyperparameters, after some tweaking around.
 ```
 We can probably get much better result with proper hyperparameter tuning but I have absolutely no idea how to do that more systematic way than educated guessing and trying.
 
-On my laptop (with a cheap dedicated GPU from 8 years ago), I get in a few hours:
+On my laptop (with a cheap dedicated GPU from 8 years ago), I get in ~1h:
 
 Before   | Translation of "longtemps je me suis couché de bonne heure." |
 :--------|:-------------------------------------------------------------|
