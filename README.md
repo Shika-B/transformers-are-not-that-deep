@@ -15,13 +15,18 @@ We can probably get much better result with proper hyperparameter tuning but I h
 
 On my laptop (with a cheap dedicated GPU from 8 years ago), I get in ~1h:
 
-Before   | Translation of "longtemps je me suis couché de bonne heure." |
+After    | Translation of "longtemps je me suis couché de bonne heure." |
 :--------|:-------------------------------------------------------------|
-Epoch 2  | long long i'm a good time.                                   |
-Epoch 5  | a long time i went to bed.                                   |
-Epoch 10 | i went to bed at a good time.                                |
-Epoch 15 | i have been to bed by a good time.                           |
-Epoch 20 | long i went to sleep early.                                  |
+Epoch 2  | since i got up from a good time.                             |
+Epoch 5  | i had to go to bed at a good time.                           |
+Epoch 10 | i had a good time to go to bed.                              |
+Epoch 15 | ?     |
+Epoch 20 | ?                                 |
+
+The sentence "Longtemps je me suis couché de bonne heure" is especially hard to translate for the model (I guess the very formal tone does not help). Here are the results on a variety of simpler sentences:
+```python
+TODO
+```
 
 # Project Architecture
 The file architecture is the following:
