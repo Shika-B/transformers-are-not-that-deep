@@ -1,6 +1,8 @@
 import torch
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from torch import nn
 from torch.utils.data import DataLoader, random_split
+
 
 from encoder import Encoder
 from decoder import Decoder
@@ -151,41 +153,21 @@ def translate(sentence, model, tokenizer, max_len=40, device="cpu"):
     # Fix apostrophes and punctuation extra spaces
     translation = re.sub(r"\s+'\s+", "'", translation)
     translation = re.sub(r"\s+([?.!,;:])", r"\1", translation)
+    translation = re.sub(" ", "", translation)
+    translation = re.sub('Ġ', ' ', translation)
+    # translation = re.sub("\\.| |,", "", translation)
+    # translation = re.sub("Ġ|'", ' ', translation)
 
-    return translation
-
-
-class InverseSqrtLR:
-    def __init__(self, optimizer, warmup_steps, peak_lr):
-        self.optimizer = optimizer
-        self.warmup_steps = warmup_steps
-        self.peak_lr = peak_lr
-        self.step_num = 0
-
-    def step(self):
-        self.step_num += 1
-        
-        if self.step_num <= self.warmup_steps:
-            lr = self.peak_lr * self.step_num / self.warmup_steps
-        else:
-            lr = self.peak_lr * (self.warmup_steps ** 0.5) / (self.step_num ** 0.5)
-
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] = lr
-
-        return lr
+    return translation.strip()
 
 
 def train(reload_path: str | None = None, save_path: str | None = None):
-    # For a reproducible splitting of the dataset in case of reloading
-    torch.manual_seed(23)
-
     num_layers = 4
-    num_heads = 8
-    d_model = 256
+    num_heads = 4
+    d_model = 128
     # Longer sequences (after tokenization) get excluded from the dataset
     max_seq_len = 64
-    vocab_size = 10_000
+    vocab_size = 8_000
     pad_id = 0
 
     batch_size = 32
@@ -205,8 +187,31 @@ def train(reload_path: str | None = None, save_path: str | None = None):
     torch.set_float32_matmul_precision("high")
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_id, label_smoothing=0.1)
-    optimizer = torch.optim.Adam(model.parameters())
-    scheduler = InverseSqrtLR(optimizer, warmup_steps=4000, peak_lr=3e-4)
+
+    base_lr = 5e-4
+    warmup_steps = 25
+    total_steps = 500  # depends on dataset size / batch size / epochs
+    weight_decay = 0.01
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
+
+    warmup_scheduler = LinearLR(
+        optimizer,
+        start_factor=1e-8,
+        end_factor=1.0,
+        total_iters=warmup_steps
+    )
+
+    cosine_scheduler = CosineAnnealingLR(
+        optimizer,
+        T_max=total_steps - warmup_steps,
+        eta_min=0
+    )
+    scheduler = SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_steps]
+    )
     tokenizer = get_bpe_tokenizer("data/eng-fra.txt", vocab_size=vocab_size)
 
     def pad_sequences(sequences, max_len, pad_value):
@@ -233,31 +238,19 @@ def train(reload_path: str | None = None, save_path: str | None = None):
         return src_batch, tgt_in_batch, tgt_out_batch
 
     dataset = FraEngDataset(tokenizer, file_path, max_seq_len)
-
-    train_size = int(0.8 * len(dataset))
-    val_size = int(0.1 * len(dataset))
-    test_size = len(dataset) - train_size - val_size
-
     print("Number of sentence pairs we are training on:", len(dataset))
-    train_ds, val_ds, test_ds = random_split(dataset, [train_size, val_size, test_size])
 
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn
-    )
-    _test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn
+        dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn
     )
 
     print("Loaded data")
     num_epochs = 20
 
-    test_translate = "Longtemps je me suis couché de bonne heure"
+    test_translate = "c est difficile de te comprendre"
     model.train()
     print("Starting training")
-    for epoch in range(num_epochs):
+    for epoch in range(0, num_epochs):
         for idx, (src, tgt_in, tgt_out) in enumerate(train_loader):
             model.train()
             src = src.to(device)
@@ -288,26 +281,6 @@ def train(reload_path: str | None = None, save_path: str | None = None):
                 print(f"Translation of '{test_translate}': {translation}")
                 print(f"Last loss: {loss.item()}")
 
-        print("Testing on validation dataset")
-        val_loss = 0.0
-
-        model.eval()
-        with torch.no_grad():
-            for src, tgt_in, tgt_out in val_loader:
-                src = src.to(device)
-                tgt_in = tgt_in.to(device)
-                tgt_out = tgt_out.to(device)
-
-                logits = model(src, tgt_in)
-
-                logits_flat = logits.reshape(-1, vocab_size)
-                tgt_flat = tgt_out.reshape(-1)
-
-                loss = criterion(logits_flat, tgt_flat)
-                val_loss += loss.item()
-
-        mean_val_loss = val_loss / len(val_loader)
-        print("Validation loss:", mean_val_loss)
         if save_path is not None:
             torch.save(model.state_dict(), save_path)
             print("Saved model")
@@ -317,11 +290,10 @@ def interact(reload_path: str):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     num_layers = 4
-    num_heads = 8
-    d_model = 256
-    # Longer sequences (after tokenization) get excluded from the dataset
+    num_heads = 4
+    d_model = 128
     max_seq_len = 64
-    vocab_size = 10_000
+    vocab_size = 8_000
     pad_id = 0
 
     model = TranslateModel(
@@ -337,9 +309,40 @@ def interact(reload_path: str):
         if to_translate in {"exit", "quit"}:
             break
         translated = translate(to_translate, model, tokenizer, device=device)
-        print("Traduction: ", translated)
+        print("Traduction:", translated)
 
+def gen_test_answers(reload_path: str):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    num_layers = 4
+    num_heads = 4
+    d_model = 128
+    max_seq_len = 64
+    vocab_size = 8_000
+    pad_id = 0
+
+    model = TranslateModel(
+        num_layers, num_heads, d_model, max_seq_len, vocab_size, pad_id
+    ).to(device)
+
+    model_state_dict = torch.load(reload_path)
+    model.load_state_dict(model_state_dict)
+    model.eval()
+    tokenizer = get_bpe_tokenizer("data/eng-fra.txt", vocab_size=vocab_size)
+
+    result = "ID,TARGET\n"
+    with open('data/fra.csv') as file:
+        lines = file.read().split('\n')[1:]
+        for line in lines:
+            idx, content = line.split(',')
+            translated = translate(content, model, tokenizer, device=device)
+            result += f"{idx}, {translated}\n"
+            print(idx)
+    
+    with open('data/results.csv', 'w+') as file:
+        file.write(result)
+ 
 if __name__ == "__main__":
-    train(save_path="weights/model.pth")
-    # interact("weights/model.pth")
+    # train(save_path="weights/model128-4-4-8000.pth", reload_path="weights/model128-4-4-8000.pth")
+    interact("weights/model128-4-4-8000.pth")
+    g# en_test_answers(reload_path="weights/model128-4-4-8000.pth")
